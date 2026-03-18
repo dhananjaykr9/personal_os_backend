@@ -24,11 +24,18 @@ def get_system_context(db: Session):
     
     context = f"""
 Current System Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}
-Active Tasks:
-{chr(10).join(task_list) if task_list else "None"}
+User: Dhananjay Kharkar (System Architect)
+Clearance Level: Admin Alpha
 
-Habit Status:
-{chr(10).join(habit_list) if habit_list else "None"}
+Operational Summary:
+- Active Tactical Objectives: {len(tasks)}
+- Core Habit Streaks: {sum(h.streak for h in habits) if habits else 0}
+
+Neural Nodes (Tasks):
+{chr(10).join(task_list) if task_list else "- System clear: No pending objectives."}
+
+Biological Sync (Habits):
+{chr(10).join(habit_list) if habit_list else "- Sync active: No habits logged."}
 """
     return context
 
@@ -41,7 +48,7 @@ async def orin_chat(request: conversation_schema.OrinRequest, db: Session = Depe
     # 2. Build Prompt
     system_context = get_system_context(db)
     messages = [
-        {"role": "system", "content": f"You are Orin, a smooth, professional, and proactive AI assistant for Dhananjay's Life OS. Your voice is male and resonant. You have access to real-time system data. Keep responses concise and actionable. {system_context}"}
+        {"role": "system", "content": f"You are Orin, the bespoke intelligence OS for Dhananjay's Life OS. You are professional, proactive, and highly technical. Your persona is that of a system core assisting a lead architect. You have direct uplink to the following system telemetry: {system_context}. Address the user as 'Chief Dhananjay' or 'Architect'. Keep responses efficient and data-driven."}
     ]
     
     for h in history:
