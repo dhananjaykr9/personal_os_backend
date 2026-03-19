@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import engine, Base
-from .routers import task_router, learning_router, roadmap_router, habit_router, note_router, learning_log_router, mistake_router, milestone_router, orin_router, search_router
+from .routers import task_router, learning_router, roadmap_router, habit_router, note_router, learning_log_router, mistake_router, milestone_router, orin_router, search_router, notification_router
 
 # Create tables
 Base.metadata.create_all(bind=engine)
@@ -26,6 +26,7 @@ app.include_router(learning_log_router.router, prefix="/api/learning-logs", tags
 app.include_router(mistake_router.router, prefix="/api/mistakes", tags=["Mistakes"])
 app.include_router(orin_router.router, prefix="/api/orin", tags=["Orin"])
 app.include_router(search_router.router, prefix="/api/search", tags=["Search"])
+app.include_router(notification_router.router, prefix="/api/notifications", tags=["Notifications"])
 
 @app.get("/")
 def read_root():

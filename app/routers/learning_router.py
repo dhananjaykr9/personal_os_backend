@@ -10,6 +10,16 @@ router = APIRouter()
 
 @router.post("/", response_model=learning_schema.LearningTopic)
 def create_topic(topic: learning_schema.LearningTopicCreate, db: Session = Depends(get_db)):
+    # Check for existing topic
+    existing = db.query(learning_model.LearningTopicModel).filter(learning_model.LearningTopicModel.topic == topic.topic).first()
+    if existing:
+        # Update existing topic's syllabus if provided
+        if topic.syllabus:
+            existing.syllabus = topic.syllabus
+            db.commit()
+            db.refresh(existing)
+        return existing
+        
     db_topic = learning_model.LearningTopicModel(**topic.dict())
     db.add(db_topic)
     db.commit()

@@ -10,6 +10,11 @@ router = APIRouter()
 
 @router.post("/", response_model=learning_schema.RoadmapSkill)
 def create_skill(skill: learning_schema.RoadmapSkillCreate, db: Session = Depends(get_db)):
+    # Check for existing skill
+    existing = db.query(learning_model.RoadmapSkillModel).filter(learning_model.RoadmapSkillModel.skill_name == skill.skill_name).first()
+    if existing:
+        return existing
+        
     db_skill = learning_model.RoadmapSkillModel(**skill.dict())
     db.add(db_skill)
     db.commit()

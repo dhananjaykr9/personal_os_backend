@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import date, datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 from uuid import UUID
 
 class LearningTopicBase(BaseModel):
@@ -9,6 +9,7 @@ class LearningTopicBase(BaseModel):
     completion_percentage: Optional[int] = 0
     hours_spent: Optional[float] = 0.0
     status: Optional[str] = "not_started"
+    syllabus: Optional[Dict[str, Any]] = None
 
 class LearningTopicCreate(LearningTopicBase):
     pass
@@ -19,6 +20,7 @@ class LearningTopicUpdate(BaseModel):
     completion_percentage: Optional[int] = None
     hours_spent: Optional[float] = None
     status: Optional[str] = None
+    syllabus: Optional[Dict[str, Any]] = None
 
 class LearningTopic(LearningTopicBase):
     id: UUID
