@@ -38,3 +38,13 @@ def update_skill(skill_id: UUID, skill: learning_schema.RoadmapSkillUpdate, db: 
     db.commit()
     db.refresh(db_skill)
     return db_skill
+
+@router.delete("/{skill_id}")
+def delete_skill(skill_id: UUID, db: Session = Depends(get_db)):
+    db_skill = db.query(learning_model.RoadmapSkillModel).filter(learning_model.RoadmapSkillModel.id == skill_id).first()
+    if not db_skill:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    
+    db.delete(db_skill)
+    db.commit()
+    return {"message": "Skill deleted successfully"}

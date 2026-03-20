@@ -2,13 +2,17 @@ import os
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import List, Dict, Any
 from datetime import datetime
 from ..database import get_db
-from ..models import conversation_model, task_model, habit_model
+from ..models import conversation_model, task_model, habit_model, finance_model
 from ..schemas import conversation_schema
 from ..config import settings
+from ..services.finance_service import FinanceService
+from ..schemas.finance_schema import TransactionCreate, PriceCreate
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +28,23 @@ def get_system_context(db: Session):
     task_list = [f"- {t.title} (Priority: {t.priority})" for t in tasks[:10]]
     habit_list = [f"- {h.name} (Streak: {h.streak})" for h in habits]
     
+    # Advanced Finance Analytics
+    now = datetime.utcnow()
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    
+    finance_summary = db.query(
+        finance_model.TransactionModel.type,
+        func.sum(finance_model.TransactionModel.amount).label("total")
+    ).filter(finance_model.TransactionModel.timestamp >= month_start).group_by(finance_model.TransactionModel.type).all()
+    
+    # Loan Portfolio
+    loans = db.query(finance_model.LoanModel).filter(finance_model.LoanModel.status == 'pending').all()
+    loan_given = sum(l.amount for l in loans if l.type == 'given')
+    loan_taken = sum(l.amount for l in loans if l.type == 'taken')
+
+    finance_text = f"Monthly Registry: " + (", ".join([f"{r.type}: ₹{r.total}" for r in finance_summary]) if finance_summary else "No data.")
+    loan_text = f"Loan Portfolio: Given ₹{loan_given}, Taken ₹{loan_taken}"
+
     context = f"""
 Current System Time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} UTC
 User: Dhananjay Kharkar (System Architect)
@@ -31,7 +52,8 @@ Clearance Level: Admin Alpha
 
 Operational Summary:
 - Active Tactical Objectives: {len(tasks)}
-- Core Habit Streaks: {sum(h.streak for h in habits) if habits else 0}
+- {finance_text}
+- {loan_text}
 
 Neural Nodes (Tasks):
 {chr(10).join(task_list) if task_list else "- System clear: No pending objectives."}
@@ -56,14 +78,14 @@ async def orin_chat(request: conversation_schema.OrinRequest, db: Session = Depe
     # 3. Build Prompt
     system_context = get_system_context(db)
     messages = [
-        {"role": "system", "content": f"""You are Orin, the intelligence core embedded in Dhananjay Kharkar's personal OS. Rules you MUST follow:
-1. BREVITY IS LAW: Respond in 1-2 sentences MAXIMUM. Never exceed 30 words. No lists, no elaboration.
-2. DIRECT ANSWERS ONLY: Answer exactly what was asked. Nothing more.
-3. PERSONA: You are a silent, efficient AI system. Address the user as 'Chief' only when greeting.
-4. NAVIGATION: If the user says 'go to', 'open', 'show me', 'navigate to' any page - acknowledge with 1 short sentence.
-5. NO UNSOLICITED INFO: Never volunteer data not asked for.
+        {"role": "system", "content": f"""You are Orin, the intelligence core embedded in Dhananjay Kharkar's personal OS. Rules:
+1. BREVITY IS LAW: 1-2 sentences MAX.
+2. FINANCE PROTOCOL: 
+   - If user says 'Add [amount] [category]', acknowledge strictly.
+   - If user asks about spending, refer to telemetry.
+3. NAVIGATION: Acknowledge 'go to/open' commands.
 
-System telemetry (use ONLY if directly asked):
+System telemetry:
 {system_context}"""}
     ]
     
@@ -113,14 +135,13 @@ System telemetry (use ONLY if directly asked):
     except Exception as e:
         logger.warning(f"Failed to persist conversation: {str(e)}")
     
-    # 6. Action Detection - Comprehensive Navigation Map
+    # 6. Action Detection
     actions = []
     msg = request.message.lower()
 
-    # 6a. Music Commands (Phase 55 Integration)
+    # 6a. Music Commands
     music_triggers = ["play ", "listen to ", "play song ", "song named "]
     if any(t in msg for t in music_triggers):
-        # Extract query: remove the trigger phrase
         query = msg
         for t in music_triggers:
             if t in msg:
@@ -129,7 +150,6 @@ System telemetry (use ONLY if directly asked):
         
         if query:
             try:
-                # Reuse the high-resilience search logic
                 results = await search_music(query)
                 if results and len(results) > 0:
                     best = results[0]
@@ -144,7 +164,6 @@ System telemetry (use ONLY if directly asked):
                 else:
                     response_text = f"I searched for '{query}', Chief, but couldn't find a matching audio stream."
             except Exception as e:
-                print(f"DEBUG: Voice Search Error: {str(e)}")
                 response_text = "I encountered a synchronization error while accessing the audio lattice."
 
     # 6b. Navigation Triggers
@@ -159,15 +178,57 @@ System telemetry (use ONLY if directly asked):
         (["learn", "learning", "skill", "skills", "knowledge"], "/learning"),
         (["road", "roadmap", "milestone", "milestones", "timeline"], "/roadmap"),
         (["analytic", "analytics", "stats", "statistics", "report"], "/analytics"),
+        (["money", "finance", "expense", "budget", "price"], "/finance"),
         (["terminal", "console", "kernel"], "/terminal"),
         (["setting", "settings", "config", "configuration"], "/settings"),
     ]
 
     for keywords, path in nav_map:
         if any(k in msg for k in keywords):
-            if is_nav_command or any(k in msg for k in keywords):  # navigate on keyword match
+            if is_nav_command or any(k in msg for k in keywords):
                 actions.append({"type": "navigate", "path": path})
                 break
+
+    # 6c. Finance Intents (Advanced Tracking)
+    # Temporal Spending Queries (Custom prompt override for performance)
+    temporal_match = re.search(r'(?:how\s+much\s+did\s+i\s+spend|show\s+expenses)\s+(?:for\s+)?(today|this\s+week|this\s+month|last\s+7\s+days)', msg)
+    if temporal_match:
+        period_key = temporal_match.group(1).replace(" ", "_")
+        mapping = {"today": "daily", "this_week": "weekly", "this_month": "monthly", "last_7_days": "weekly"}
+        period_type = mapping.get(period_key, "daily")
+        summary_data = FinanceService.get_summary(db, period_type)
+        response_text = f"Telemetry Analysis for {temporal_match.group(1).upper()}: Your expenditure is ₹{summary_data['expense']} against ₹{summary_data['income']} inbound."
+        actions.append({"type": "navigate", "path": "/finance"})
+        actions.append({"type": "finance_update", "period": period_type})
+
+    # Standard Entry Capture
+    finance_match = re.search(r'(?:add\s+)?(?:₹|rs\.?\s*)?(\d+)\s+(?:for\s+)?([a-zA-Z]+)', msg)
+    if finance_match and not temporal_match:
+        amount = float(finance_match.group(1))
+        category_name = finance_match.group(2).lower()
+        try:
+            FinanceService.add_transaction(db, TransactionCreate(
+                amount=amount,
+                type="expense",
+                category=category_name.title(),
+                note=f"Orin AI Capture: {request.message}"
+            ))
+            response_text = f"Strategy Updated: Allocated ₹{amount} to {category_name.title()} sector."
+            actions.append({"type": "finance_update", "category": category_name})
+        except Exception as e:
+            logger.error(f"Finance capture error: {str(e)}")
+
+    # Price tracking
+    price_match = re.search(r'(?:price\s+of\s+)?([a-zA-Z\s]+)\s+(?:is\s+)?(?:₹|rs\.?\s*)?(\d+)', msg)
+    if price_match and not finance_match:
+        item_name = price_match.group(1).strip()
+        price_val = float(price_match.group(2))
+        try:
+            FinanceService.add_price(db, PriceCreate(item_name=item_name, price=price_val))
+            response_text = f"Price telemetry updated for {item_name}: ₹{price_val}."
+            actions.append({"type": "price_update", "item": item_name})
+        except Exception as e:
+            logger.error(f"Price capture error: {str(e)}")
 
     return {"response": response_text, "actions": actions}
 
@@ -189,34 +250,24 @@ async def search_music(q: str):
             try:
                 url = f"{instance}/api/v1/search"
                 params = {"q": q, "type": "video", "fields": "videoId,title,author,lengthSeconds,videoThumbnails"}
-                print(f"DEBUG: Trying Invidious search -> {instance}")
                 res = await client.get(url, params=params, timeout=6.0)
                 if res.status_code == 200:
                     data = res.json()
                     if isinstance(data, list) and len(data) > 0:
-                        print(f"DEBUG: Invidious Success -> {instance}")
                         return data
-                print(f"DEBUG: Invidious Fail ({res.status_code}) -> {instance}")
-            except Exception as e:
-                print(f"DEBUG: Invidious Error ({str(e)}) -> {instance}")
+            except Exception:
                 continue
 
         # 2. Fallback to Piped Instances
-        print("DEBUG: Falling back to Piped APIs...")
         piped_instances = [
             "https://pipedapi.kavin.rocks",
             "https://api.piped.vic.au",
-            "https://piped-api.lunar.icu",
-            "https://pipedapi.tokhmi.xyz",
-            "https://pipedapi.drgns.space",
-            "https://pipedapi.oxit.at",
-            "https://api.piped.privacydev.net"
+            "https://piped-api.lunar.icu"
         ]
         for instance in piped_instances:
             try:
                 url = f"{instance}/search"
                 params = {"q": q, "filter": "videos"}
-                print(f"DEBUG: Trying Piped search -> {instance}")
                 res = await client.get(url, params=params, timeout=6.0)
                 if res.status_code == 200:
                     data = res.json()
@@ -237,15 +288,11 @@ async def search_music(q: str):
                             "videoThumbnails": [{"url": item.get("thumbnail") or item.get("thumbnailUrl")}]
                         })
                     if results:
-                        print(f"DEBUG: Piped Success -> {instance}")
                         return results
-                print(f"DEBUG: Piped Fail ({res.status_code}) -> {instance}")
-            except Exception as e:
-                print(f"DEBUG: Piped Error ({str(e)}) -> {instance}")
+            except Exception:
                 continue
 
-        # 3. Ultimate Fallback: Direct YouTube Scrape (Residential IP)
-        print("DEBUG: Falling back to Direct YouTube Scrape...")
+        # 3. Ultimate Fallback: Direct YouTube Scrape
         try:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
@@ -262,10 +309,7 @@ async def search_music(q: str):
                     try:
                         contents = data["contents"]["twoColumnSearchResultsRenderer"]["primaryContents"]["sectionListRenderer"]["contents"]
                     except:
-                        try:
-                            contents = data["contents"]["twoColumnBrowseResultsRenderer"]["tabs"][0]["expandableTabRenderer"]["content"]["sectionListRenderer"]["contents"]
-                        except:
-                            contents = []
+                        contents = []
 
                     results = []
                     for section in contents:
@@ -287,13 +331,11 @@ async def search_music(q: str):
                                             "videoThumbnails": [{"url": thumbnail}]
                                         })
                     if results:
-                        print("DEBUG: Direct Scrape Success")
                         return results
-                print("DEBUG: Direct Scrape Fail (Structure mismatch)")
-        except Exception as e:
-            print(f"DEBUG: Direct Scrape Error ({str(e)})")
+        except Exception:
+            pass
 
-    raise HTTPException(status_code=503, detail="Audio nodes unresponsive. YouTube is currently restricting automated access.")
+    raise HTTPException(status_code=503, detail="Audio nodes unresponsive.")
 
 @router.get("/info/{video_id}")
 async def get_video_info(video_id: str):
@@ -334,27 +376,5 @@ async def get_video_info(video_id: str):
                     return res.json()
             except Exception:
                 continue
-
-        # 3. Piped Fallback
-        piped_instances = [
-            "https://pipedapi.kavin.rocks",
-            "https://api.piped.vic.au",
-            "https://piped-api.lunar.icu"
-        ]
-        for instance in piped_instances:
-            try:
-                url = f"{instance}/streams/{video_id}"
-                res = await client.get(url, timeout=5.0)
-                if res.status_code == 200:
-                    data = res.json()
-                    return {
-                        "videoId": video_id,
-                        "title": data.get("title"),
-                        "author": data.get("uploader"),
-                        "lengthSeconds": data.get("duration", 0),
-                        "videoThumbnails": [{"url": data.get("thumbnailUrl")}]
-                    }
-            except Exception:
-                continue
                 
-    raise HTTPException(status_code=404, detail="Metadata unavailable for this video stream.")
+    raise HTTPException(status_code=404, detail="Metadata unavailable.")

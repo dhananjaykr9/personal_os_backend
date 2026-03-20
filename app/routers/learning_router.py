@@ -43,3 +43,13 @@ def update_progress(topic_id: UUID, progress: learning_schema.LearningTopicUpdat
     db.commit()
     db.refresh(db_topic)
     return db_topic
+
+@router.delete("/{topic_id}")
+def delete_topic(topic_id: UUID, db: Session = Depends(get_db)):
+    db_topic = db.query(learning_model.LearningTopicModel).filter(learning_model.LearningTopicModel.id == topic_id).first()
+    if not db_topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    
+    db.delete(db_topic)
+    db.commit()
+    return {"message": "Topic deleted successfully"}
